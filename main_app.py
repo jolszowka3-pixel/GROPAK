@@ -1,25 +1,29 @@
 import streamlit as st
-import json
 import os
 
 # --- 1. GLOBALNA KONFIGURACJA (MUSI BYĆ PIERWSZA) ---
 st.set_page_config(page_title="Gropak System", page_icon="🏢", layout="wide")
 
-# --- 2. OBSŁUGA BAZY UŻYTKOWNIKÓW (JSON) ---
-PLIK_USEROW = "uzytkownicy.json"
-
-def wczytaj_uzytkownikow():
-    if os.path.exists(PLIK_USEROW):
-        with open(PLIK_USEROW, "r", encoding="utf-8") as f:
-            return json.load(f)
-    # Domyślne dane, jeśli plik nie istnieje
-    return {"szef": {"haslo": "admin123", "rola": "admin"}}
+# --- 2. BAZA UŻYTKOWNIKÓW (HARDCODED) ---
+# Tutaj zarządzasz dostępem. Dodaj nowych pracowników według wzoru poniżej.
+UZYTKOWNICY = {
+    "szef": {
+        "haslo": "admin123", 
+        "rola": "admin"
+    },
+    "kierownik": {
+        "haslo": "erp2026", 
+        "rola": "erp_only"
+    },
+    "magazynier": {
+        "haslo": "paka777", 
+        "rola": "wms_only"
+    }
+}
 
 # Inicjalizacja sesji
 if 'zalogowany' not in st.session_state:
     st.session_state.update({'zalogowany': False, 'rola': 'brak', 'login': 'brak'})
-
-UZYTKOWNICY = wczytaj_uzytkownikow()
 
 # --- 3. GLOBALNE LOGO NA PASKU BOCZNYM ---
 logo_path = "logo.png"
@@ -56,22 +60,20 @@ with st.sidebar:
     st.markdown("---")
 
 # --- 5. DEFINICJE STRON ---
-# Zakładamy, że wszystkie pliki są w tym samym folderze co main_app.py
+# Pliki muszą znajdować się w tym samym folderze co main_app.py na GitHubie
 strona_glowna = st.Page("strona_glowna.py", title="Strona Publiczna", icon="🏠")
 strona_kalkulator = st.Page("kalkulator.py", title="Kalkulator Wysyłek", icon="🧮")
 strona_erp = st.Page("realizacja.py", title="Baza Realizacji (ERP)", icon="📊")
 strona_wms = st.Page("pakownia.py", title="System Pakowania (WMS)", icon="📦")
-strona_admin = st.Page("admin_panel.py", title="Panel Admina", icon="⚙️")
 
 # --- 6. DYNAMICZNE BUDOWANIE MENU ---
-# Strony dostępne dla każdego
 strony_widoczne = [strona_glowna, strona_kalkulator]
 
 rola = st.session_state['rola']
 
-# Dodawanie stron na podstawie roli
 if rola == "admin":
-    strony_widoczne.extend([strona_erp, strona_wms, strona_admin])
+    # Admin widzi wszystko (bez Panelu Admina, bo zarządzasz kodem)
+    strony_widoczne.extend([strona_erp, strona_wms])
 elif rola == "erp_only":
     strony_widoczne.append(strona_erp)
 elif rola == "wms_only":
