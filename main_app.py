@@ -83,7 +83,6 @@ strona_wms = st.Page("pakownia.py", title="System Pakowania (WMS)", icon="📦")
 # --- 6. DYNAMICZNE BUDOWANIE MENU (MULTIDOSTĘP) ---
 strony_widoczne = [strona_glowna, strona_kalkulator]
 
-# Zabezpieczenie formatu ról jako lista
 role_uzytkownika = st.session_state.get('rola', [])
 if isinstance(role_uzytkownika, str):
     role_uzytkownika = [role_uzytkownika]
@@ -95,7 +94,8 @@ else:
         if strona_erp not in strony_widoczne:
             strony_widoczne.append(strona_erp)
             
-    if "wms_only" in role_uzytkownika:
+    # ZMIANA: Zakładkę pakowni widzi "wms_only" ORAZ "wms_szef"
+    if "wms_only" in role_uzytkownika or "wms_szef" in role_uzytkownika:
         if strona_wms not in strony_widoczne:
             strony_widoczne.append(strona_wms)
 
