@@ -563,13 +563,17 @@ hist_data = load_data(HIST_FILE)
 dyspo_data = load_data(DYSPOZYCJE_FILE)
 zwroty_data = load_data(ZWROTY_FILE)
 
-# ZMIANA: Przełącznik widzi "admin" ORAZ "wms_szef"
+# Przełącznik widzi "admin" ORAZ "wms_szef"
 if "admin" in role_uzytkownika or "wms_szef" in role_uzytkownika:
-    st.sidebar.markdown("### ⚙️ Tryb Zarządzania WMS")
-    wybrany_widok = st.sidebar.radio(
-        "Wybierz widok WMS:", 
-        ["👔 Panel Szefa", "📦 Terminal Pracownika"]
+    
+    # Przełącznik ląduje na samej górze strony głównej
+    st.markdown("<div style='padding: 10px 0; border-bottom: 2px solid #e2e8f0; margin-bottom: 20px;'>", unsafe_allow_html=True)
+    wybrany_widok = st.radio(
+        "⚙️ Przełącz widok WMS:", 
+        ["👔 Panel Szefa", "📦 Terminal Pracownika"],
+        horizontal=True # Ustawia przyciski obok siebie, co oszczędza miejsce na górze
     )
+    st.markdown("</div>", unsafe_allow_html=True)
     
     if wybrany_widok == "👔 Panel Szefa":
         pokaz_panel_szefa(zam_data, hist_data, dyspo_data, zwroty_data)
