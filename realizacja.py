@@ -116,47 +116,9 @@ def get_gsheet_client():
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
         scoped_credentials = credentials.with_scopes(["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
         return gspread.authorize(scoped_credentials)
-    except: return None
-
-def posortuj_dane(dane):
-    def sort_key(item):
-        pilne = 0 if item.get('pilne') else 1 
-        t_val = str(item.get('auto', 'Brak'))
-        t_score = OPCJE_TRANSPORTU.index(t_val) if t_val in OPCJE_TRANSPORTU else 99
-        k_score = int(item.get('kurs', 1))
-        status_score = 1 if item.get('status') == 'Gotowe' else 0 
-        try:
-            termin = str(item.get('termin', '')).strip()
-            if not termin: return (2, 9999, 99, 99, 99, 99, 99, pilne)
-            parts = termin.split('.')
-            return (0, 2026, int(parts[1]), int(parts[0]), t_score, k_score, status_score, pilne)
-        except: return (1, 9999, 99, 99, 99, 99, 99, pilne)
-    for k in ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]:
-        if k in dane: dane[k].sort(key=sort_key)
-    return dane
-
-# --- FUNKCJA AUTOMATYCZNEGO PRZESUWANIA ZALEGŁYCH ZADAŃ ---
-def auto_przesun_zadania(dane):
-    dzis = datetime.now()
-    dzis_str = dzis.strftime("%d.%m")
-    zmiana = False
-    kategorie = ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]
-    
-    for kat in kategorie:
-        for item in dane.get(kat, []):
-            # POPRAWKA: Przesuwamy WSZYSTKO co zostało w listach aktywnych (nawet status 'Gotowe'), 
-            # jeśli nie zostało jeszcze wysłane do historii.
-            termin_str = str(item.get("termin", "")).strip()
-            if termin_str:
-                try:
-                    parts = termin_str.split('.')
-                    d, m = int(parts[0]), int(parts[1])
-                    data_item = datetime(2026, m, d)
-                    if data_item.date() < dzis.date():
-                        item["termin"] = dzis_str
-                        zmiana = True
-                except: pass
-    return dane, zmiana
+    except Exception as e:
+        st.error(f"🚨 BŁĄD AUTORYZACJI Z GOOGLE: {e}")
+        return None
 
 def wczytaj_dane():
     default_dane = {"w_realizacji": [], "zrealizowane": [], "przyjecia": [], "przyjecia_historia": [], "dyspozycje": [], "dyspozycje_historia": [], "odbiory": [], "odbiory_historia": [], "tablica": [], "uzytkownicy": {"admin": {"pass": "gropak2026", "role": "admin", "last_login": ""}}}
@@ -168,23 +130,12 @@ def wczytaj_dane():
             d = json.loads(val)
             for k, v in default_dane.items():
                 if k not in d: d[k] = v
-            # Uruchomienie automatycznego przesuwania terminów (teraz również dla 'Gotowych')
             d, czy_byla_zmiana = auto_przesun_zadania(d)
             if czy_byla_zmiana: zapisz_dane(d)
             return posortuj_dane(d)
-    except: pass
+    except Exception as e:
+        st.error(f"🚨 BŁĄD ODCZYTU ARKUSZA: {e}")
     return default_dane
-
-def zapisz_dane(dane_do_zapisu):
-    client = get_gsheet_client()
-    if client:
-        try:
-            sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0)
-            ws.update_acell('A1', json.dumps(posortuj_dane(dane_do_zapisu)))
-        except: pass
-
-dane = wczytaj_dane()
-
 # --- 3. FUNKCJE POMOCNICZE ---
 def generuj_html_do_druku(z):
     auto_val = z.get('auto', 'Brak'); k_val = z.get('kurs', 1); transport_str = f"{auto_val} / Kurs nr {k_val}" if auto_val in ["Auto 1", "Auto 2"] else auto_val
