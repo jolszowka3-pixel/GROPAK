@@ -6,7 +6,7 @@ import gspread
 from google.oauth2 import service_account
 
 # --- 1. KONFIGURACJA I STYLIZACJA ---
-# Uwaga: st.set_page_config usunięte, ponieważ jest już w main_app.py
+# USUNIĘTO: st.set_page_config(page_title="GROPAK ERP", layout="wide") -> Jest już w main_app.py
 
 st.markdown("""
 <style>
@@ -212,22 +212,18 @@ def generuj_rozpiske_zbiorcza(data_cel, lista_zlecen, lista_odbiorow):
     html += "</body></html>"; return html
 
 # --- 4. INTEGRACJA Z NOWYM SYSTEMEM LOGOWANIA (main_app.py) ---
-# Pobieramy dane z sesji nowej aplikacji
-if not st.session_state.get('zalogowany'):
-    st.warning("Zaloguj się używając panelu bocznego głównej aplikacji.")
+if not st.session_state.get('zalogowany', False):
+    st.warning("Zaloguj się w panelu bocznym na stronie głównej.")
     st.stop()
 
-# Przypisanie użytkownika do zmiennej z której korzysta ten plik (do zapisywania autora akcji)
 st.session_state.user = st.session_state.get('login', 'Nieznany')
 
-# Logika ról na listach (Dostosowanie do nowego systemu)
-role = st.session_state.get('rola', [])
-if isinstance(role, str):
-    role = [role]
+role_uzytkownika = st.session_state.get('rola', [])
+if isinstance(role_uzytkownika, str):
+    role_uzytkownika = [role_uzytkownika]
 
-# Uprawnienia z nowymi rolami
-is_admin = "admin" in role
-can_edit = "admin" in role or "erp_only" in role or "edycja" in role
+is_admin = "admin" in role_uzytkownika
+can_edit = "admin" in role_uzytkownika or "erp_only" in role_uzytkownika or "edycja" in role_uzytkownika
 is_readonly = not can_edit
 
 # --- 5. PANEL BOCZNY ---
@@ -236,7 +232,12 @@ with st.sidebar:
     tryb_mobilny = st.toggle("📱 Tryb Mobilny", value=False)
     st.divider()
     st.write(f"Zalogowany: **{st.session_state.user}**")
-    if st.button("🚪 Wyloguj"): st.session_state.user = None; st.rerun()
+    
+    # Przycisk wylogowania teraz czyści sesję głównej aplikacji
+    if st.button("🚪 Wyloguj"): 
+        st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak', 'user': None})
+        st.rerun()
+        
     st.divider()
     if is_admin:
         with st.expander("👥 Użytkownicy"):
