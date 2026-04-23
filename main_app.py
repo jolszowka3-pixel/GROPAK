@@ -48,24 +48,27 @@ st.sidebar.markdown("---")
 with st.sidebar:
     if not st.session_state['zalogowany']:
         st.markdown("### 🔒 Zaloguj się")
-        login_input = st.text_input("Login")
-        haslo_input = st.text_input("Hasło", type="password")
         
-        if st.button("Zaloguj", use_container_width=True):
-            if login_input in UZYTKOWNICY and str(UZYTKOWNICY[login_input]["haslo"]) == haslo_input:
-                st.session_state.update({
-                    'zalogowany': True, 
-                    'rola': UZYTKOWNICY[login_input]["rola"], 
-                    'login': login_input
-                })
-                st.success("Zalogowano!")
-                st.rerun()
-            else:
-                st.error("Błędne dane!")
+        # Zamykamy logowanie w formularzu, dzięki czemu działa klawisz ENTER
+        with st.form("formularz_logowania"):
+            login_input = st.text_input("Login")
+            haslo_input = st.text_input("Hasło", type="password")
+            
+            # Zmieniamy st.button na st.form_submit_button
+            if st.form_submit_button("Zaloguj", use_container_width=True):
+                if login_input in UZYTKOWNICY and str(UZYTKOWNICY[login_input]["haslo"]) == haslo_input:
+                    st.session_state.update({
+                        'zalogowany': True, 
+                        'rola': UZYTKOWNICY[login_input]["rola"], 
+                        'login': login_input
+                    })
+                    st.success("Zalogowano!")
+                    st.rerun()
+                else:
+                    st.error("Błędne dane!")
     else:
         st.success(f"👤 Zalogowany: **{st.session_state['login']}**")
         
-        # Wyświetlanie ról ładnie po przecinku
         role_tekst = ", ".join(st.session_state['rola']) if isinstance(st.session_state['rola'], list) else st.session_state['rola']
         st.caption(f"Uprawnienia: {role_tekst}")
         
