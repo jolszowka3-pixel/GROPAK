@@ -12,7 +12,7 @@ UZYTKOWNICY = {
     },
     "michal.bryl": {
         "haslo": "gropak2026", 
-        "rola": ["erp_only", "wms_only"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
+        "rola": ["erp_only", "wms_szef"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
     },
     "michal.bodura": {
         "haslo": "gropak2026", 
@@ -24,7 +24,7 @@ UZYTKOWNICY = {
     },
     "rafal.skazynski": {
         "haslo": "gropak2026", 
-        "rola": ["wms_only"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
+        "rola": ["wms_szef"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
     },
     "wysylka": {
         "haslo": "gropak2026", 
