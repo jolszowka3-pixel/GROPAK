@@ -9,15 +9,15 @@ st.set_page_config(page_title="Gropak System", page_icon="🏢", layout="wide")
 UZYTKOWNICY = {
     "szef": {
         "haslo": "admin123", 
-        "rola": "admin"
+        "rola": ["admin"] # Admin i tak widzi wszystko
     },
-    "kierownik": {
-        "haslo": "erp2026", 
-        "rola": "erp_only"
+    "marek": {
+        "haslo": "gropak2026", 
+        "rola": ["erp_only", "wms_only"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
     },
     "magazynier": {
         "haslo": "paka777", 
-        "rola": "wms_only"
+        "rola": ["wms_only"] # Widzi tylko pakownię
     }
 }
 
@@ -66,18 +66,24 @@ strona_kalkulator = st.Page("kalkulator.py", title="Kalkulator Wysyłek", icon="
 strona_erp = st.Page("realizacja.py", title="Baza Realizacji (ERP)", icon="📊")
 strona_wms = st.Page("pakownia.py", title="System Pakowania (WMS)", icon="📦")
 
-# --- 6. DYNAMICZNE BUDOWANIE MENU ---
+# --- 6. DYNAMICZNE BUDOWANIE MENU (MULTIDOSTĘP) ---
 strony_widoczne = [strona_glowna, strona_kalkulator]
 
-rola = st.session_state['rola']
+# Pobieramy listę ról użytkownika (jeśli nie ma ról, dajemy pustą listę)
+role_uzytkownika = st.session_state.get('rola', [])
 
-if rola == "admin":
-    # Admin widzi wszystko (bez Panelu Admina, bo zarządzasz kodem)
+# Jeśli użytkownik jest adminem - dodajemy wszystko i kończymy
+if "admin" in role_uzytkownika:
     strony_widoczne.extend([strona_erp, strona_wms])
-elif rola == "erp_only":
-    strony_widoczne.append(strona_erp)
-elif rola == "wms_only":
-    strony_widoczne.append(strona_wms)
+else:
+    # Jeśli nie jest adminem, sprawdzamy każde uprawnienie z osobna
+    if "erp_only" in role_uzytkownika:
+        if strona_erp not in strony_widoczne:
+            strony_widoczne.append(strona_erp)
+            
+    if "wms_only" in role_uzytkownika:
+        if strona_wms not in strony_widoczne:
+            strony_widoczne.append(strona_wms)
 
 # --- 7. URUCHOMIENIE NAWIGACJI ---
 pg = st.navigation(strony_widoczne)
