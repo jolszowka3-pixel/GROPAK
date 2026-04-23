@@ -4,9 +4,10 @@ import pandas as pd
 from datetime import datetime, timedelta
 import gspread
 from google.oauth2 import service_account
+from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURACJA I STYLIZACJA ---
-# USUNIĘTO: st.set_page_config(page_title="GROPAK ERP", layout="wide") -> Jest już w main_app.py
+# Uwaga: st.set_page_config usunięte, ponieważ strona główna (main_app.py) robi to za nas.
 
 st.markdown("""
 <style>
@@ -112,13 +113,50 @@ OPCJE_TRANSPORTU = ["Brak", "Auto 1", "Auto 2", "Transport zewnętrzny", "Odbió
 @st.cache_resource
 def get_gsheet_client():
     try:
-        creds_dict = st.secrets["gcp_service_account"]
-        credentials = service_account.Credentials.from_service_account_info(creds_dict)
-        scoped_credentials = credentials.with_scopes(["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
-        return gspread.authorize(scoped_credentials)
+        # POBIERAMY DANE UŻYWAJĄC TEJ SAMEJ, DZIAŁAJĄCEJ METODY CO W PAKOWNI
+        conn = st.connection("gsheets_2", type=GSheetsConnection)
+        return conn.client
     except Exception as e:
-        st.error(f"🚨 BŁĄD AUTORYZACJI Z GOOGLE: {e}")
+        st.error(f"❌ Błąd połączenia z bazą: {e}")
         return None
+
+def posortuj_dane(dane):
+    def sort_key(item):
+        pilne = 0 if item.get('pilne') else 1 
+        t_val = str(item.get('auto', 'Brak'))
+        t_score = OPCJE_TRANSPORTU.index(t_val) if t_val in OPCJE_TRANSPORTU else 99
+        k_score = int(item.get('kurs', 1))
+        status_score = 1 if item.get('status') == 'Gotowe' else 0 
+        try:
+            termin = str(item.get('termin', '')).strip()
+            if not termin: return (2, 9999, 99, 99, 99, 99, 99, pilne)
+            parts = termin.split('.')
+            return (0, 2026, int(parts[1]), int(parts[0]), t_score, k_score, status_score, pilne)
+        except: return (1, 9999, 99, 99, 99, 99, 99, pilne)
+    for k in ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]:
+        if k in dane: dane[k].sort(key=sort_key)
+    return dane
+
+# --- FUNKCJA AUTOMATYCZNEGO PRZESUWANIA ZALEGŁYCH ZADAŃ ---
+def auto_przesun_zadania(dane):
+    dzis = datetime.now()
+    dzis_str = dzis.strftime("%d.%m")
+    zmiana = False
+    kategorie = ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]
+    
+    for kat in kategorie:
+        for item in dane.get(kat, []):
+            termin_str = str(item.get("termin", "")).strip()
+            if termin_str:
+                try:
+                    parts = termin_str.split('.')
+                    d, m = int(parts[0]), int(parts[1])
+                    data_item = datetime(2026, m, d)
+                    if data_item.date() < dzis.date():
+                        item["termin"] = dzis_str
+                        zmiana = True
+                except: pass
+    return dane, zmiana
 
 def wczytaj_dane():
     default_dane = {"w_realizacji": [], "zrealizowane": [], "przyjecia": [], "przyjecia_historia": [], "dyspozycje": [], "dyspozycje_historia": [], "odbiory": [], "odbiory_historia": [], "tablica": [], "uzytkownicy": {"admin": {"pass": "gropak2026", "role": "admin", "last_login": ""}}}
@@ -133,9 +171,19 @@ def wczytaj_dane():
             d, czy_byla_zmiana = auto_przesun_zadania(d)
             if czy_byla_zmiana: zapisz_dane(d)
             return posortuj_dane(d)
-    except Exception as e:
-        st.error(f"🚨 BŁĄD ODCZYTU ARKUSZA: {e}")
+    except: pass
     return default_dane
+
+def zapisz_dane(dane_do_zapisu):
+    client = get_gsheet_client()
+    if client:
+        try:
+            sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0)
+            ws.update_acell('A1', json.dumps(posortuj_dane(dane_do_zapisu)))
+        except: pass
+
+dane = wczytaj_dane()
+
 # --- 3. FUNKCJE POMOCNICZE ---
 def generuj_html_do_druku(z):
     auto_val = z.get('auto', 'Brak'); k_val = z.get('kurs', 1); transport_str = f"{auto_val} / Kurs nr {k_val}" if auto_val in ["Auto 1", "Auto 2"] else auto_val
@@ -169,13 +217,15 @@ if not st.session_state.get('zalogowany', False):
 
 st.session_state.user = st.session_state.get('login', 'Nieznany')
 
-role_uzytkownika = st.session_state.get('rola', [])
-if isinstance(role_uzytkownika, str):
-    role_uzytkownika = [role_uzytkownika]
+# Logika ról na listach (Dostosowanie do nowego systemu)
+role = st.session_state.get('rola', [])
+if isinstance(role, str):
+    role = [role]
 
-is_admin = "admin" in role_uzytkownika
-can_edit = "admin" in role_uzytkownika or "erp_only" in role_uzytkownika or "edycja" in role_uzytkownika
-is_readonly = not can_edit
+# Poniżej zmieniamy sposób sprawdzania (kto może edytować):
+is_readonly = not ("admin" in role or "edycja" in role or "erp_only" in role)
+can_edit = "admin" in role or "edycja" in role or "erp_only" in role
+is_admin = "admin" in role
 
 # --- 5. PANEL BOCZNY ---
 with st.sidebar:
@@ -184,27 +234,41 @@ with st.sidebar:
     st.divider()
     st.write(f"Zalogowany: **{st.session_state.user}**")
     
-    # Przycisk wylogowania teraz czyści sesję głównej aplikacji
     if st.button("🚪 Wyloguj"): 
-        st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak', 'user': None})
+        st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak'})
         st.rerun()
         
     st.divider()
+    
     if is_admin:
         with st.expander("👥 Użytkownicy"):
             with st.form("add_u_f", clear_on_submit=True):
-                nu, np, nr = st.text_input("Login"), st.text_input("Hasło"), st.selectbox("Rola", ["edycja","wgląd","admin"])
+                nu, np, nr = st.text_input("Login"), st.text_input("Hasło"), st.selectbox("Rola", ["edycja","wgląd","admin", "erp_only"])
                 if st.form_submit_button("Dodaj"):
-                    if nu: dane["uzytkownicy"][nu] = {"pass": np, "role": nr, "last_login": ""}; zapisz_dane(dane); st.rerun()
+                    if nu: 
+                        dane["uzytkownicy"][nu] = {"pass": np, "role": [nr], "last_login": ""}
+                        zapisz_dane(dane)
+                        st.rerun()
             for usr, info in dane["uzytkownicy"].items():
                 c1, c2, c3 = st.columns([2,1.2,0.8])
                 c1.write(f"**{usr}**")
                 with c2.popover("Edytuj"):
                     ep = st.text_input("Hasło", info["pass"], key=f"up_{usr}")
-                    er = st.selectbox("Rola", ["edycja","wgląd","admin"], ["edycja","wgląd","admin"].index(info["role"]), key=f"ur_{usr}")
-                    if st.button("💾 Zapisz", key=f"us_{usr}"): dane["uzytkownicy"][usr].update({"pass": ep, "role": er}); zapisz_dane(dane); st.rerun()
+                    
+                    aktualna_rola = info["role"][0] if isinstance(info["role"], list) else info["role"]
+                    dostepne_role = ["edycja","wgląd","admin","erp_only"]
+                    idx = dostepne_role.index(aktualna_rola) if aktualna_rola in dostepne_role else 0
+                    
+                    er = st.selectbox("Rola", dostepne_role, idx, key=f"ur_{usr}")
+                    if st.button("💾 Zapisz", key=f"us_{usr}"): 
+                        dane["uzytkownicy"][usr].update({"pass": ep, "role": [er]})
+                        zapisz_dane(dane)
+                        st.rerun()
                 if usr != "admin":
-                    if c3.button("X", key=f"del_{usr}"): del dane["uzytkownicy"][usr]; zapisz_dane(dane); st.rerun()
+                    if c3.button("X", key=f"del_{usr}"): 
+                        del dane["uzytkownicy"][usr]
+                        zapisz_dane(dane)
+                        st.rerun()
 
     if can_edit:
         st.markdown('<div class="sidebar-header">➕ NOWY WPIS</div>', unsafe_allow_html=True)
