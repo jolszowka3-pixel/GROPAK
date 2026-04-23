@@ -3,8 +3,11 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 import gspread
+from google.oauth2 import service_account
 
-# --- 1. STYLIZACJA (CSS) ZACHOWANA ZE STAREGO KODU ---
+# --- 1. KONFIGURACJA I STYLIZACJA ---
+# Uwaga: st.set_page_config usunięte, ponieważ jest już w main_app.py
+
 st.markdown("""
 <style>
 /* Wspólne ustawienia przycisków */
@@ -30,6 +33,24 @@ button:has(div p:contains("Zapisz")), button:contains("Zapisz") {
 button:has(div p:contains("RESETUJ")), button:contains("RESETUJ") {
     border: none !important; color: white !important; background-color: #dc3545 !important; font-weight: 900 !important;
 }
+button:has(div p:contains("Zaloguj się")), button:contains("Zaloguj się") {
+    border: none !important; color: white !important; background-color: #1e7e34 !important; height: 40px !important; font-size: 14px; margin-top: 10px;
+}
+button:has(div p:contains("Przywróć")), button:contains("Przywróć") {
+    border: none !important; color: white !important; background-color: #17a2b8 !important;
+}
+
+/* PASEK POWIADOMIEŃ */
+.notification-container {
+    background-color: #fff3cd;
+    border: 2px solid #ffeeba;
+    border-left: 10px solid #ffc107;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 25px;
+}
+.notif-title { font-weight: 900; color: #856404; font-size: 16px; margin-bottom: 8px; }
+.notif-item { font-size: 13px; color: #856404; padding: 2px 0; border-bottom: 1px dashed #ffeeba; }
 
 .main .block-container { padding-top: 2rem; }
 .section-header { background-color: #f8f9fa; padding: 12px 15px; border-radius: 6px; margin-bottom: 12px; margin-top: 25px; font-weight: 700; color: #212529; text-transform: uppercase; border-left: 5px solid #2b3035; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
@@ -45,7 +66,13 @@ button:has(div p:contains("RESETUJ")), button:contains("RESETUJ") {
     color: #333;
     border-left: 2px solid #e6e600;
 }
-.note-meta { font-size: 10px; color: #888; margin-top: 15px; border-top: 1px dashed #d1d13a; padding-top: 5px; }
+.note-meta { 
+    font-size: 10px; 
+    color: #888; 
+    margin-top: 15px; 
+    border-top: 1px dashed #d1d13a; 
+    padding-top: 5px; 
+}
 
 /* KALENDARZ */
 [data-testid="stHorizontalBlock"]:has(> div:nth-child(7)):not(:has(> div:nth-child(8))) { gap: 0px !important; }
@@ -68,34 +95,28 @@ button:has(div p:contains("RESETUJ")), button:contains("RESETUJ") {
 .badge-status-prod { background-color: #ffc107; color: #212529; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; margin-left: 5px; display: inline-block;}
 .badge-status-ready { background-color: #28a745; color: white; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; margin-left: 5px; display: inline-block;}
 .badge-status-return { background-color: #7b1fa2; color: white; padding: 2px 5px; border-radius: 4px; font-size: 9px; font-weight: bold; margin-left: 5px; display: inline-block;}
+.label-text { font-size: 11px; color: #6c757d; font-weight: 700; text-transform: uppercase; border-bottom: 1px solid #dee2e6; padding-bottom: 4px;}
 .readonly-text { font-size: 13px; white-space: pre-wrap; color: #495057; line-height: 1.4; padding: 5px; background: #fdfdfd; border-radius: 4px; border: 1px solid #eee; }
+
+/* Tooltip dla nazwy klienta */
 .client-hover { cursor: help; border-bottom: 1px dotted #999; }
+
 div[data-testid="stHorizontalBlock"] { align-items: flex-start !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. ZMIENNE UPRAWNIEŃ I ZARZĄDZANIE SESJĄ (Z NOWEGO PROJEKTU) ---
-rola = st.session_state.get('rola', 'wgląd')
-login = st.session_state.get('login', 'Nieznany')
-st.session_state.user = login
-
-is_admin = (rola == "admin")
-can_edit = (rola in ["admin", "erp_only", "edycja"])
-is_readonly = not can_edit
-
-# --- 3. LOGIKA BAZY DANYCH (NOWY FORMAT POŁĄCZENIA) ---
+# --- 2. LOGIKA BAZY DANYCH ---
+GSHEET_NAME = "GROPAK_ERP_DB"
 OPCJE_TRANSPORTU = ["Brak", "Auto 1", "Auto 2", "Transport zewnętrzny", "Odbiór osobisty", "Kurier"]
-SHEET_KEY = "1XgDOic0ditZBODS9Gb99wQBcMGRAJnp7TRpYqslJgLE"
 
 @st.cache_resource
 def get_gsheet_client():
     try:
-        creds_dict = st.secrets["connections"]["gsheets_1"]
-        client = gspread.service_account_from_dict(creds_dict)
-        return client
-    except Exception as e: 
-        st.error(f"Błąd połączenia z bazą: {e}")
-        return None
+        creds_dict = st.secrets["gcp_service_account"]
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        scoped_credentials = credentials.with_scopes(["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
+        return gspread.authorize(scoped_credentials)
+    except: return None
 
 def posortuj_dane(dane):
     def sort_key(item):
@@ -114,6 +135,7 @@ def posortuj_dane(dane):
         if k in dane: dane[k].sort(key=sort_key)
     return dane
 
+# --- FUNKCJA AUTOMATYCZNEGO PRZESUWANIA ZALEGŁYCH ZADAŃ ---
 def auto_przesun_zadania(dane):
     dzis = datetime.now()
     dzis_str = dzis.strftime("%d.%m")
@@ -122,6 +144,8 @@ def auto_przesun_zadania(dane):
     
     for kat in kategorie:
         for item in dane.get(kat, []):
+            # POPRAWKA: Przesuwamy WSZYSTKO co zostało w listach aktywnych (nawet status 'Gotowe'), 
+            # jeśli nie zostało jeszcze wysłane do historii.
             termin_str = str(item.get("termin", "")).strip()
             if termin_str:
                 try:
@@ -135,17 +159,16 @@ def auto_przesun_zadania(dane):
     return dane, zmiana
 
 def wczytaj_dane():
-    default_dane = {"w_realizacji": [], "zrealizowane": [], "przyjecia": [], "przyjecia_historia": [], "dyspozycje": [], "dyspozycje_historia": [], "odbiory": [], "odbiory_historia": [], "tablica": []}
+    default_dane = {"w_realizacji": [], "zrealizowane": [], "przyjecia": [], "przyjecia_historia": [], "dyspozycje": [], "dyspozycje_historia": [], "odbiory": [], "odbiory_historia": [], "tablica": [], "uzytkownicy": {"admin": {"pass": "gropak2026", "role": "admin", "last_login": ""}}}
     client = get_gsheet_client()
     if not client: return default_dane
     try:
-        sh = client.open_by_key(SHEET_KEY)
-        ws = sh.get_worksheet(0)
-        val = ws.acell('A1').value
+        sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0); val = ws.acell('A1').value
         if val:
             d = json.loads(val)
             for k, v in default_dane.items():
                 if k not in d: d[k] = v
+            # Uruchomienie automatycznego przesuwania terminów (teraz również dla 'Gotowych')
             d, czy_byla_zmiana = auto_przesun_zadania(d)
             if czy_byla_zmiana: zapisz_dane(d)
             return posortuj_dane(d)
@@ -156,14 +179,13 @@ def zapisz_dane(dane_do_zapisu):
     client = get_gsheet_client()
     if client:
         try:
-            sh = client.open_by_key(SHEET_KEY)
-            ws = sh.get_worksheet(0)
+            sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0)
             ws.update_acell('A1', json.dumps(posortuj_dane(dane_do_zapisu)))
         except: pass
 
 dane = wczytaj_dane()
 
-# --- 4. FUNKCJE POMOCNICZE (DRUK) ---
+# --- 3. FUNKCJE POMOCNICZE ---
 def generuj_html_do_druku(z):
     auto_val = z.get('auto', 'Brak'); k_val = z.get('kurs', 1); transport_str = f"{auto_val} / Kurs nr {k_val}" if auto_val in ["Auto 1", "Auto 2"] else auto_val
     return f"""<!DOCTYPE html><html lang="pl"><head><meta charset="UTF-8"><style>body{{font-family:sans-serif;padding:30px;}} .card{{border:5px solid black;padding:30px;}} h1{{text-align:center;border-bottom:3px solid black;}} .row{{display:flex;justify-content:space-between;margin-top:20px;font-size:20px;}} .box{{border:1px solid #666;padding:15px;margin-top:20px;min-height:300px;font-size:20px;white-space:pre-wrap;line-height:1.4;}}</style></head><body onload="window.print()"><div class="card"><h1>Karta Zlecenia: {z.get('klient')}</h1><div class="row"><div><b>Termin:</b> {z.get('termin')}</div><div><b>Transport:</b> {transport_str}</div></div><p><b>PRODUKTY / SZCZEGÓŁY:</b></p><div class="box">{z.get('szczegoly')}</div><div style="margin-top:50px;text-align:right;">Podpis: __________________________</div></div></body></html>"""
@@ -189,17 +211,24 @@ def generuj_rozpiske_zbiorcza(data_cel, lista_zlecen, lista_odbiorow):
             html += "</table>"
     html += "</body></html>"; return html
 
-# --- Zmodyfikowana sekcja weryfikacji uprawnień ---
-role = st.session_state.get("role", [])
+# --- 4. INTEGRACJA Z NOWYM SYSTEMEM LOGOWANIA (main_app.py) ---
+# Pobieramy dane z sesji nowej aplikacji
+if not st.session_state.get('zalogowany'):
+    st.warning("Zaloguj się używając panelu bocznego głównej aplikacji.")
+    st.stop()
 
-# Zabezpieczenie na wypadek, gdyby rola z powrotem okazała się ciągiem znaków.
+# Przypisanie użytkownika do zmiennej z której korzysta ten plik (do zapisywania autora akcji)
+st.session_state.user = st.session_state.get('login', 'Nieznany')
+
+# Logika ról na listach (Dostosowanie do nowego systemu)
+role = st.session_state.get('rola', [])
 if isinstance(role, str):
     role = [role]
 
-# Poniżej zmieniamy sposób sprawdzania (kto może edytować):
-is_readonly = not ("admin" in role or "edycja" in role or "erp_only" in role)
-can_edit = "admin" in role or "edycja" in role or "erp_only" in role
+# Uprawnienia z nowymi rolami
 is_admin = "admin" in role
+can_edit = "admin" in role or "erp_only" in role or "edycja" in role
+is_readonly = not can_edit
 
 # --- 5. PANEL BOCZNY ---
 with st.sidebar:
@@ -209,39 +238,21 @@ with st.sidebar:
     st.write(f"Zalogowany: **{st.session_state.user}**")
     if st.button("🚪 Wyloguj"): st.session_state.user = None; st.rerun()
     st.divider()
-    
-    # Zabezpieczony panel dodawania użytkowników dla admina
     if is_admin:
         with st.expander("👥 Użytkownicy"):
             with st.form("add_u_f", clear_on_submit=True):
-                nu, np, nr = st.text_input("Login"), st.text_input("Hasło"), st.selectbox("Rola", ["edycja","wgląd","admin","erp_only"])
+                nu, np, nr = st.text_input("Login"), st.text_input("Hasło"), st.selectbox("Rola", ["edycja","wgląd","admin"])
                 if st.form_submit_button("Dodaj"):
-                    if nu: 
-                        # Zapisujemy rolę jako listę, by była zgodna z nowym systemem
-                        dane["uzytkownicy"][nu] = {"pass": np, "role": [nr], "last_login": ""}
-                        zapisz_dane(dane)
-                        st.rerun()
+                    if nu: dane["uzytkownicy"][nu] = {"pass": np, "role": nr, "last_login": ""}; zapisz_dane(dane); st.rerun()
             for usr, info in dane["uzytkownicy"].items():
                 c1, c2, c3 = st.columns([2,1.2,0.8])
                 c1.write(f"**{usr}**")
                 with c2.popover("Edytuj"):
                     ep = st.text_input("Hasło", info["pass"], key=f"up_{usr}")
-                    
-                    # Zabezpieczenie przed błędem, gdy rola jest listą
-                    aktualna_rola = info["role"][0] if isinstance(info["role"], list) else info["role"]
-                    dostepne_role = ["edycja","wgląd","admin","erp_only"]
-                    idx = dostepne_role.index(aktualna_rola) if aktualna_rola in dostepne_role else 0
-                    
-                    er = st.selectbox("Rola", dostepne_role, idx, key=f"ur_{usr}")
-                    if st.button("💾 Zapisz", key=f"us_{usr}"): 
-                        dane["uzytkownicy"][usr].update({"pass": ep, "role": [er]})
-                        zapisz_dane(dane)
-                        st.rerun()
+                    er = st.selectbox("Rola", ["edycja","wgląd","admin"], ["edycja","wgląd","admin"].index(info["role"]), key=f"ur_{usr}")
+                    if st.button("💾 Zapisz", key=f"us_{usr}"): dane["uzytkownicy"][usr].update({"pass": ep, "role": er}); zapisz_dane(dane); st.rerun()
                 if usr != "admin":
-                    if c3.button("X", key=f"del_{usr}"): 
-                        del dane["uzytkownicy"][usr]
-                        zapisz_dane(dane)
-                        st.rerun()
+                    if c3.button("X", key=f"del_{usr}"): del dane["uzytkownicy"][usr]; zapisz_dane(dane); st.rerun()
 
     if can_edit:
         st.markdown('<div class="sidebar-header">➕ NOWY WPIS</div>', unsafe_allow_html=True)
@@ -260,8 +271,8 @@ with st.sidebar:
 st.markdown('<div class="section-header">Terminarz Tygodniowy</div>', unsafe_allow_html=True)
 if "wo" not in st.session_state: st.session_state.wo = 0
 cn1, _, cn3 = st.columns([1,4,1])
-if cn1.button("← Poprzedni", key="btn_prev_week"): st.session_state.wo -= 7; st.rerun()
-if cn3.button("Następny →", key="btn_next_week"): st.session_state.wo += 7; st.rerun()
+if cn1.button("← Poprzedni"): st.session_state.wo -= 7; st.rerun()
+if cn3.button("Następny →"): st.session_state.wo += 7; st.rerun()
 start = datetime.now() - timedelta(days=datetime.now().weekday()) + timedelta(days=st.session_state.wo)
 
 if not tryb_mobilny:
@@ -305,7 +316,7 @@ else:
 
 # --- 7. TABELE REALIZACJI I TABLICA OGŁOSZEŃ ---
 st.markdown('<div class="section-header">Listy Realizacji</div>', unsafe_allow_html=True)
-search = st.text_input("🔍 Szukaj we wszystkich wpisach...", "", key="search_erp_global").lower()
+search = st.text_input("🔍 Szukaj we wszystkich wpisach...", "").lower()
 tabs = st.tabs(["🏭 Produkcja", "🔄 Odbiory", "🚚 Przyjęcia PZ", "📋 Dyspozycje", "📌 Tablica Ogłoszeń"])
 
 def renderuj_tabele_ujednolicona(lista_zrodlowa, klucz_nazwa, klucz_szczegoly, klucz_id, typ_sekcji):
@@ -328,13 +339,11 @@ def renderuj_tabele_ujednolicona(lista_zrodlowa, klucz_nazwa, klucz_szczegoly, k
         szczeg_safe = str(item.get(klucz_szczegoly, "Brak opisu")).replace('"', "&quot;").replace("'", "&apos;").replace("\n", " ")
         u_id = f"{klucz_id}_{i}_{item.get('data_p','')}".replace(':','').replace(' ','_').replace('.','_')
         st.markdown("<div style='padding:10px 0; border-bottom:1px solid #eee;'>", unsafe_allow_html=True)
-        
         if not tryb_mobilny:
             c = st.columns([2.0, 1.2, 5.0, 1.2, 0.6])
             c[0].markdown(f"<span class='client-hover' title='{szczeg_safe}'>**{item.get(klucz_nazwa)}**</span><br>{badge}", unsafe_allow_html=True)
             c[1].write(item.get('termin', '---'))
-            if is_readonly: 
-                c[2].markdown(f"<div class='readonly-text'>{item.get(klucz_szczegoly,'-')}</div>", unsafe_allow_html=True)
+            if is_readonly: c[2].markdown(f"<div class='readonly-text'>{item.get(klucz_szczegoly,'-')}</div>", unsafe_allow_html=True)
             else:
                 with c[2].popover("Edytuj"):
                     if klucz_id == "prod": st.download_button("🖨️ Karta A4", generuj_html_do_druku(item), f"Karta_{u_id}.html", "text/html", key=f"dl_{u_id}")
@@ -342,30 +351,23 @@ def renderuj_tabele_ujednolicona(lista_zrodlowa, klucz_nazwa, klucz_szczegoly, k
                     new_s = st.text_area("Szczegóły", item.get(klucz_szczegoly), key=f"s_{u_id}")
                     new_au = st.selectbox("Auto", OPCJE_TRANSPORTU, OPCJE_TRANSPORTU.index(item.get('auto','Brak')), key=f"au_{u_id}")
                     new_kr = st.selectbox("Kurs", [1,2,3,4,5], int(item.get('kurs',1))-1, key=f"kr_{u_id}")
-                    if st.button("Zapisz", key=f"sv_{u_id}"): 
-                        item.update({"termin":new_t, klucz_szczegoly:new_s, "auto":new_au, "kurs":int(new_kr)})
-                        zapisz_dane(dane)
-                        st.rerun()
+                    if st.button("Zapisz", key=f"sv_{u_id}"): item.update({"termin":new_t, klucz_szczegoly:new_s, "auto":new_au, "kurs":int(new_kr)}); zapisz_dane(dane); st.rerun()
             if not is_readonly:
-                if status != "Gotowe" and c[3].button("ZROBIONE" if klucz_id != "pz" else "OK", key=f"ok_{u_id}"): 
-                    item['status'] = "Gotowe"; zapisz_dane(dane); st.rerun()
+                if status != "Gotowe" and c[3].button("ZROBIONE" if klucz_id != "pz" else "OK", key=f"ok_{u_id}"): item['status'] = "Gotowe"; zapisz_dane(dane); st.rerun()
                 elif status == "Gotowe" and c[3].button("WYŚLIJ", key=f"send_{u_id}"):
                     h_map = {"prod":"zrealizowane", "odb":"odbiory_historia", "pz":"przyjecia_historia", "dysp":"dyspozycje_historia"}
                     dane[h_map.get(klucz_id)].append(lista_zrodlowa.pop(i)); zapisz_dane(dane); st.rerun()
-                if c[4].button("X", key=f"del_{u_id}"): 
-                    lista_zrodlowa.pop(i); zapisz_dane(dane); st.rerun()
+                if c[4].button("X", key=f"del_{u_id}"): lista_zrodlowa.pop(i); zapisz_dane(dane); st.rerun()
         else:
             c1, c2 = st.columns([3.5, 1.5])
             c1.markdown(f"**{item.get(klucz_nazwa)}**<br>{badge}", unsafe_allow_html=True)
             with c2.popover("Akcje"):
                 if not is_readonly:
-                    if status != "Gotowe" and st.button("ZROBIONE", key=f"mok_{u_id}"): 
-                        item['status']="Gotowe"; zapisz_dane(dane); st.rerun()
+                    if status != "Gotowe" and st.button("ZROBIONE", key=f"mok_{u_id}"): item['status']="Gotowe"; zapisz_dane(dane); st.rerun()
                     if status == "Gotowe" and st.button("WYŚLIJ", key=f"msnd_{u_id}"):
                         h_map = {"prod":"zrealizowane", "odb":"odbiory_historia", "pz":"przyjecia_historia", "dysp":"dyspozycje_historia"}
                         dane[h_map.get(klucz_id)].append(lista_zrodlowa.pop(i)); zapisz_dane(dane); st.rerun()
-                    if st.button("USUŃ", key=f"mdel_{u_id}"): 
-                        lista_zrodlowa.pop(i); zapisz_dane(dane); st.rerun()
+                    if st.button("USUŃ", key=f"mdel_{u_id}"): lista_zrodlowa.pop(i); zapisz_dane(dane); st.rerun()
         st.markdown("</div>", unsafe_allow_html=True)
 
 with tabs[0]:
@@ -386,16 +388,14 @@ with tabs[3]:
     with s1: renderuj_tabele_ujednolicona(dane["dyspozycje"], "tytul", "opis", "dysp", "active")
     with s2: st.dataframe(dane["dyspozycje_historia"][::-1], use_container_width=True)
 
-# --- TABLICA OGŁOSZEŃ ---
+# --- NOWA ZAKŁADKA: TABLICA OGŁOSZEŃ ---
 with tabs[4]:
     st.markdown('<div class="section-header">📌 Tablica Ogłoszeń</div>', unsafe_allow_html=True)
     if can_edit:
         with st.form("bottom_note", clear_on_submit=True):
             nowa_tresc = st.text_area("Dodaj ogłoszenie:")
             if st.form_submit_button("➕ Opublikuj"):
-                if nowa_tresc: 
-                    dane["tablica"].append({"tresc": nowa_tresc, "data": datetime.now().strftime("%d.%m %H:%M"), "autor": st.session_state.user})
-                    zapisz_dane(dane); st.rerun()
+                if nowa_tresc: dane["tablica"].append({"tresc": nowa_tresc, "data": datetime.now().strftime("%d.%m %H:%M"), "autor": st.session_state.user}); zapisz_dane(dane); st.rerun()
     
     if not dane["tablica"]:
         st.info("Brak aktywnych ogłoszeń.")
