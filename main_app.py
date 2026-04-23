@@ -4,8 +4,7 @@ import os
 # --- 1. GLOBALNA KONFIGURACJA (MUSI BYĆ PIERWSZA) ---
 st.set_page_config(page_title="Gropak System", page_icon="🏢", layout="wide")
 
-# --- 2. BAZA UŻYTKOWNIKÓW (HARDCODED) ---
-# Tutaj zarządzasz dostępem. Dodaj nowych pracowników według wzoru poniżej.
+# --- 2. BAZA UŻYTKOWNIKÓW (HARDCODED Z LISTĄ RÓL) ---
 UZYTKOWNICY = {
     "admin": {
         "haslo": "admin123", 
@@ -30,11 +29,12 @@ UZYTKOWNICY = {
     "wysylka": {
         "haslo": "gropak2026", 
         "rola": ["wms_only"] # Widzi tylko pakownię
-}
+    }
+} # <--- Ten nawias zamykający był przyczyną błędu!
 
 # Inicjalizacja sesji
 if 'zalogowany' not in st.session_state:
-    st.session_state.update({'zalogowany': False, 'rola': 'brak', 'login': 'brak'})
+    st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak'})
 
 # --- 3. GLOBALNE LOGO NA PASKU BOCZNYM ---
 logo_path = "logo.png"
@@ -64,14 +64,17 @@ with st.sidebar:
                 st.error("Błędne dane!")
     else:
         st.success(f"👤 Zalogowany: **{st.session_state['login']}**")
-        st.caption(f"Uprawnienia: {st.session_state['rola']}")
+        
+        # Wyświetlanie ról ładnie po przecinku
+        role_tekst = ", ".join(st.session_state['rola']) if isinstance(st.session_state['rola'], list) else st.session_state['rola']
+        st.caption(f"Uprawnienia: {role_tekst}")
+        
         if st.button("🚪 Wyloguj", use_container_width=True):
-            st.session_state.update({'zalogowany': False, 'rola': 'brak', 'login': 'brak'})
+            st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak'})
             st.rerun()
     st.markdown("---")
 
 # --- 5. DEFINICJE STRON ---
-# Pliki muszą znajdować się w tym samym folderze co main_app.py na GitHubie
 strona_glowna = st.Page("strona_glowna.py", title="Strona Publiczna", icon="🏠")
 strona_kalkulator = st.Page("kalkulator.py", title="Kalkulator Wysyłek", icon="🧮")
 strona_erp = st.Page("realizacja.py", title="Baza Realizacji (ERP)", icon="📊")
@@ -80,14 +83,14 @@ strona_wms = st.Page("pakownia.py", title="System Pakowania (WMS)", icon="📦")
 # --- 6. DYNAMICZNE BUDOWANIE MENU (MULTIDOSTĘP) ---
 strony_widoczne = [strona_glowna, strona_kalkulator]
 
-# Pobieramy listę ról użytkownika (jeśli nie ma ról, dajemy pustą listę)
+# Zabezpieczenie formatu ról jako lista
 role_uzytkownika = st.session_state.get('rola', [])
+if isinstance(role_uzytkownika, str):
+    role_uzytkownika = [role_uzytkownika]
 
-# Jeśli użytkownik jest adminem - dodajemy wszystko i kończymy
 if "admin" in role_uzytkownika:
     strony_widoczne.extend([strona_erp, strona_wms])
 else:
-    # Jeśli nie jest adminem, sprawdzamy każde uprawnienie z osobna
     if "erp_only" in role_uzytkownika:
         if strona_erp not in strony_widoczne:
             strony_widoczne.append(strona_erp)
