@@ -189,31 +189,72 @@ def generuj_rozpiske_zbiorcza(data_cel, lista_zlecen, lista_odbiorow):
             html += "</table>"
     html += "</body></html>"; return html
 
+# --- Zmodyfikowana sekcja weryfikacji uprawnień ---
+role = st.session_state.get("role", [])
+
+# Zabezpieczenie na wypadek, gdyby rola z powrotem okazała się ciągiem znaków.
+if isinstance(role, str):
+    role = [role]
+
+# Poniżej zmieniamy sposób sprawdzania (kto może edytować):
+is_readonly = not ("admin" in role or "edycja" in role or "erp_only" in role)
+can_edit = "admin" in role or "edycja" in role or "erp_only" in role
+is_admin = "admin" in role
+
 # --- 5. PANEL BOCZNY ---
 with st.sidebar:
-    st.markdown("### PANEL STEROWANIA ERP")
-    tryb_mobilny = st.toggle("📱 Tryb Mobilny", value=False, key="toggle_mobile_erp")
+    st.markdown("### PANEL STEROWANIA")
+    tryb_mobilny = st.toggle("📱 Tryb Mobilny", value=False)
     st.divider()
     st.write(f"Zalogowany: **{st.session_state.user}**")
+    if st.button("🚪 Wyloguj"): st.session_state.user = None; st.rerun()
     st.divider()
+    
+    # Zabezpieczony panel dodawania użytkowników dla admina
+    if is_admin:
+        with st.expander("👥 Użytkownicy"):
+            with st.form("add_u_f", clear_on_submit=True):
+                nu, np, nr = st.text_input("Login"), st.text_input("Hasło"), st.selectbox("Rola", ["edycja","wgląd","admin","erp_only"])
+                if st.form_submit_button("Dodaj"):
+                    if nu: 
+                        # Zapisujemy rolę jako listę, by była zgodna z nowym systemem
+                        dane["uzytkownicy"][nu] = {"pass": np, "role": [nr], "last_login": ""}
+                        zapisz_dane(dane)
+                        st.rerun()
+            for usr, info in dane["uzytkownicy"].items():
+                c1, c2, c3 = st.columns([2,1.2,0.8])
+                c1.write(f"**{usr}**")
+                with c2.popover("Edytuj"):
+                    ep = st.text_input("Hasło", info["pass"], key=f"up_{usr}")
+                    
+                    # Zabezpieczenie przed błędem, gdy rola jest listą
+                    aktualna_rola = info["role"][0] if isinstance(info["role"], list) else info["role"]
+                    dostepne_role = ["edycja","wgląd","admin","erp_only"]
+                    idx = dostepne_role.index(aktualna_rola) if aktualna_rola in dostepne_role else 0
+                    
+                    er = st.selectbox("Rola", dostepne_role, idx, key=f"ur_{usr}")
+                    if st.button("💾 Zapisz", key=f"us_{usr}"): 
+                        dane["uzytkownicy"][usr].update({"pass": ep, "role": [er]})
+                        zapisz_dane(dane)
+                        st.rerun()
+                if usr != "admin":
+                    if c3.button("X", key=f"del_{usr}"): 
+                        del dane["uzytkownicy"][usr]
+                        zapisz_dane(dane)
+                        st.rerun()
 
     if can_edit:
         st.markdown('<div class="sidebar-header">➕ NOWY WPIS</div>', unsafe_allow_html=True)
-        typ = st.selectbox("Rodzaj:", ["Produkcja", "Odbiór (Powrót)", "Dostawa (PZ)", "Dyspozycja"], key="sb_rodzaj_wpisu")
+        typ = st.selectbox("Rodzaj:", ["Produkcja", "Odbiór (Powrót)", "Dostawa (PZ)", "Dyspozycja"])
         with st.form("f_add"):
-            kl = st.text_input("Nazwa/Klient")
-            tm = st.text_input("Termin (np. 22.04)")
-            sz = st.text_area("Szczegóły")
-            au = st.selectbox("Auto", OPCJE_TRANSPORTU)
-            kr = st.selectbox("Kurs", [1,2,3,4,5])
-            pi = st.checkbox("PILNE")
+            kl, tm, sz, au, kr, pi = st.text_input("Nazwa/Klient"), st.text_input("Termin"), st.text_area("Szczegóły"), st.selectbox("Auto", OPCJE_TRANSPORTU), st.selectbox("Kurs", [1,2,3,4,5]), st.checkbox("PILNE")
             if st.form_submit_button("Zapisz"):
                 key_map = {"Produkcja": "w_realizacji", "Odbiór (Powrót)": "odbiory", "Dostawa (PZ)": "przyjecia", "Dyspozycja": "dyspozycje"}
                 item = {"klient": kl, "miejsce": kl, "dostawca": kl, "tytul": kl, "termin": tm, "szczegoly": sz, "towar": sz, "opis": sz, "auto": au, "kurs": int(kr), "pilne": pi, "status": "W produkcji", "data_p": datetime.now().strftime("%d.%m %H:%M"), "autor": st.session_state.user}
                 dane[key_map[typ]].append(item); zapisz_dane(dane); st.rerun()
     st.divider()
-    data_druk = st.text_input("Podaj datę do druku (np. 22.04):", value=datetime.now().strftime("%d.%m"), key="input_print_date")
-    st.download_button("📥 Pobierz Rozpiskę Dnia", data=generuj_rozpiske_zbiorcza(data_druk, dane["w_realizacji"], dane["odbiory"]), file_name=f"Plan_{data_druk}.html", mime="text/html", key="btn_download_plan")
+    data_druk = st.text_input("Podaj datę do druku (np. 31.03):", value=datetime.now().strftime("%d.%m"))
+    st.download_button("📥 Pobierz Rozpiskę Dnia", data=generuj_rozpiske_zbiorcza(data_druk, dane["w_realizacji"], dane["odbiory"]), file_name=f"Plan_{data_druk}.html", mime="text/html")
 
 # --- 6. TERMINARZ TYGODNIOWY ---
 st.markdown('<div class="section-header">Terminarz Tygodniowy</div>', unsafe_allow_html=True)
