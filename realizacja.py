@@ -4,10 +4,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import gspread
 from google.oauth2 import service_account
-from streamlit_gsheets import GSheetsConnection
 
 # --- 1. KONFIGURACJA I STYLIZACJA ---
-# Uwaga: st.set_page_config usunięte, ponieważ strona główna (main_app.py) robi to za nas.
+# Uwaga: st.set_page_config usunięte, ponieważ jest już w main_app.py
 
 st.markdown("""
 <style>
@@ -113,14 +112,16 @@ OPCJE_TRANSPORTU = ["Brak", "Auto 1", "Auto 2", "Transport zewnętrzny", "Odbió
 @st.cache_resource
 def get_gsheet_client():
     try:
-        # POBIERAMY DANE UŻYWAJĄC TEJ SAMEJ, DZIAŁAJĄCEJ METODY CO W PAKOWNI
-        conn = st.connection("gsheets_2", type=GSheetsConnection)
-        return conn.client
+        # PRZYWRÓCONO: Twoja oryginalna, działająca metoda logowania
+        creds_dict = st.secrets["gcp_service_account"]
+        credentials = service_account.Credentials.from_service_account_info(creds_dict)
+        scoped_credentials = credentials.with_scopes(["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
+        return gspread.authorize(scoped_credentials)
     except Exception as e:
-        st.error(f"❌ Błąd połączenia z bazą: {e}")
+        st.error(f"🚨 Błąd połączenia z bazą danych Google: {e}")
         return None
 
-def posortuj_dane(dane):
+def posortuj_dane(dane_sort):
     def sort_key(item):
         pilne = 0 if item.get('pilne') else 1 
         t_val = str(item.get('auto', 'Brak'))
@@ -134,18 +135,16 @@ def posortuj_dane(dane):
             return (0, 2026, int(parts[1]), int(parts[0]), t_score, k_score, status_score, pilne)
         except: return (1, 9999, 99, 99, 99, 99, 99, pilne)
     for k in ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]:
-        if k in dane: dane[k].sort(key=sort_key)
-    return dane
+        if k in dane_sort: dane_sort[k].sort(key=sort_key)
+    return dane_sort
 
-# --- FUNKCJA AUTOMATYCZNEGO PRZESUWANIA ZALEGŁYCH ZADAŃ ---
-def auto_przesun_zadania(dane):
+def auto_przesun_zadania(dane_przesun):
     dzis = datetime.now()
     dzis_str = dzis.strftime("%d.%m")
     zmiana = False
     kategorie = ["w_realizacji", "przyjecia", "dyspozycje", "odbiory"]
-    
     for kat in kategorie:
-        for item in dane.get(kat, []):
+        for item in dane_przesun.get(kat, []):
             termin_str = str(item.get("termin", "")).strip()
             if termin_str:
                 try:
@@ -156,14 +155,16 @@ def auto_przesun_zadania(dane):
                         item["termin"] = dzis_str
                         zmiana = True
                 except: pass
-    return dane, zmiana
+    return dane_przesun, zmiana
 
 def wczytaj_dane():
     default_dane = {"w_realizacji": [], "zrealizowane": [], "przyjecia": [], "przyjecia_historia": [], "dyspozycje": [], "dyspozycje_historia": [], "odbiory": [], "odbiory_historia": [], "tablica": [], "uzytkownicy": {"admin": {"pass": "gropak2026", "role": "admin", "last_login": ""}}}
     client = get_gsheet_client()
     if not client: return default_dane
     try:
-        sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0); val = ws.acell('A1').value
+        sh = client.open(GSHEET_NAME)
+        ws = sh.get_worksheet(0)
+        val = ws.acell('A1').value
         if val:
             d = json.loads(val)
             for k, v in default_dane.items():
@@ -171,17 +172,20 @@ def wczytaj_dane():
             d, czy_byla_zmiana = auto_przesun_zadania(d)
             if czy_byla_zmiana: zapisz_dane(d)
             return posortuj_dane(d)
-    except: pass
+    except Exception as e:
+        st.error(f"🚨 Nie udało się odczytać arkusza: {e}")
     return default_dane
 
 def zapisz_dane(dane_do_zapisu):
     client = get_gsheet_client()
     if client:
         try:
-            sh = client.open(GSHEET_NAME); ws = sh.get_worksheet(0)
+            sh = client.open(GSHEET_NAME)
+            ws = sh.get_worksheet(0)
             ws.update_acell('A1', json.dumps(posortuj_dane(dane_do_zapisu)))
         except: pass
 
+# --- INICJALIZACJA DANYCH ---
 dane = wczytaj_dane()
 
 # --- 3. FUNKCJE POMOCNICZE ---
@@ -210,22 +214,20 @@ def generuj_rozpiske_zbiorcza(data_cel, lista_zlecen, lista_odbiorow):
             html += "</table>"
     html += "</body></html>"; return html
 
-# --- 4. INTEGRACJA Z NOWYM SYSTEMEM LOGOWANIA (main_app.py) ---
+# --- 4. SYSTEM UPRAWNIEŃ ---
 if not st.session_state.get('zalogowany', False):
-    st.warning("Zaloguj się w panelu bocznym na stronie głównej.")
+    st.warning("Zaloguj się w panelu bocznym strony głównej.")
     st.stop()
 
+# Pobieranie loginu i roli z sesji nowej aplikacji
 st.session_state.user = st.session_state.get('login', 'Nieznany')
+role_list = st.session_state.get('rola', [])
+if isinstance(role_list, str): role_list = [role_list]
 
-# Logika ról na listach (Dostosowanie do nowego systemu)
-role = st.session_state.get('rola', [])
-if isinstance(role, str):
-    role = [role]
-
-# Poniżej zmieniamy sposób sprawdzania (kto może edytować):
-is_readonly = not ("admin" in role or "edycja" in role or "erp_only" in role)
-can_edit = "admin" in role or "edycja" in role or "erp_only" in role
-is_admin = "admin" in role
+# Nowe sprawdzanie uprawnień (obsługa listy ról)
+is_admin = "admin" in role_list
+can_edit = any(r in role_list for r in ["admin", "edycja", "erp_only"])
+is_readonly = not can_edit
 
 # --- 5. PANEL BOCZNY ---
 with st.sidebar:
@@ -233,11 +235,9 @@ with st.sidebar:
     tryb_mobilny = st.toggle("📱 Tryb Mobilny", value=False)
     st.divider()
     st.write(f"Zalogowany: **{st.session_state.user}**")
-    
     if st.button("🚪 Wyloguj"): 
         st.session_state.update({'zalogowany': False, 'rola': [], 'login': 'brak'})
         st.rerun()
-        
     st.divider()
     
     if is_admin:
@@ -254,21 +254,14 @@ with st.sidebar:
                 c1.write(f"**{usr}**")
                 with c2.popover("Edytuj"):
                     ep = st.text_input("Hasło", info["pass"], key=f"up_{usr}")
-                    
-                    aktualna_rola = info["role"][0] if isinstance(info["role"], list) else info["role"]
-                    dostepne_role = ["edycja","wgląd","admin","erp_only"]
-                    idx = dostepne_role.index(aktualna_rola) if aktualna_rola in dostepne_role else 0
-                    
-                    er = st.selectbox("Rola", dostepne_role, idx, key=f"ur_{usr}")
+                    act_role = info["role"][0] if isinstance(info["role"], list) else info["role"]
+                    er = st.selectbox("Rola", ["edycja","wgląd","admin", "erp_only"], key=f"ur_{usr}")
                     if st.button("💾 Zapisz", key=f"us_{usr}"): 
                         dane["uzytkownicy"][usr].update({"pass": ep, "role": [er]})
                         zapisz_dane(dane)
                         st.rerun()
                 if usr != "admin":
-                    if c3.button("X", key=f"del_{usr}"): 
-                        del dane["uzytkownicy"][usr]
-                        zapisz_dane(dane)
-                        st.rerun()
+                    if c3.button("X", key=f"del_{usr}"): del dane["uzytkownicy"][usr]; zapisz_dane(dane); st.rerun()
 
     if can_edit:
         st.markdown('<div class="sidebar-header">➕ NOWY WPIS</div>', unsafe_allow_html=True)
@@ -289,12 +282,12 @@ if "wo" not in st.session_state: st.session_state.wo = 0
 cn1, _, cn3 = st.columns([1,4,1])
 if cn1.button("← Poprzedni"): st.session_state.wo -= 7; st.rerun()
 if cn3.button("Następny →"): st.session_state.wo += 7; st.rerun()
-start = datetime.now() - timedelta(days=datetime.now().weekday()) + timedelta(days=st.session_state.wo)
+start_date = datetime.now() - timedelta(days=datetime.now().weekday()) + timedelta(days=st.session_state.wo)
 
 if not tryb_mobilny:
     cols = st.columns(7)
     for i in range(7):
-        day = start + timedelta(days=i); d_str = day.strftime('%d.%m')
+        day = start_date + timedelta(days=i); d_str = day.strftime('%d.%m')
         with cols[i]:
             st.markdown(f"<div class='day-header'><div class='day-name'>{['Pon','Wt','Śr','Czw','Pt','Sob','Nd'][i]}</div><div class='day-date'>{d_str}</div></div>", unsafe_allow_html=True)
             day_tasks = [x for x in (dane["w_realizacji"] + dane["odbiory"]) if x.get('termin') == d_str]
@@ -305,7 +298,6 @@ if not tryb_mobilny:
                 g_key = f"{a_name}_K{k_num}"
                 if g_key not in grupy_aut: grupy_aut[g_key] = {'auto': a_name, 'kurs': k_num, 'tasks': []}
                 grupy_aut[g_key]['tasks'].append(item)
-            
             for g_id in sorted(grupy_aut.keys()):
                 g = grupy_aut[g_id]
                 all_done = all(t.get('status') == 'Gotowe' for t in g['tasks'])
@@ -316,21 +308,20 @@ if not tryb_mobilny:
                 for t in g['tasks']: 
                     desc = str(t.get('szczegoly') or t.get('towar')).replace("\n", " ").replace("\r", "")
                     tt += f"&#10;• {t.get('klient') or t.get('miejsce')}: {desc}"
-                tooltip_html = tt.replace('"', "&quot;").replace("'", "&apos;")
-                st.markdown(f"<div class='{cl}' title='{tooltip_html}'>{display_label}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div class='{cl}' title='{tt.replace('\"','&quot;')}'>{display_label}</div>", unsafe_allow_html=True)
             for p in dane["przyjecia"]:
                 if p.get('termin') == d_str: st.markdown(f"<div class='cal-entry-in' title='{str(p.get('towar')).replace('\\n',' ')}'>P: {p.get('dostawca')}</div>", unsafe_allow_html=True)
             for d in dane["dyspozycje"]:
                 if d.get('termin') == d_str: st.markdown(f"<div class='cal-entry-task' title='{str(d.get('opis')).replace('\\n',' ')}'>D: {d.get('tytul')}</div>", unsafe_allow_html=True)
 else:
     for i in range(7):
-        day = start + timedelta(days=i); d_str = day.strftime('%d.%m')
+        day = start_date + timedelta(days=i); d_str = day.strftime('%d.%m')
         tasks = [z for z in (dane["w_realizacji"] + dane["odbiory"]) if z.get('termin') == d_str]
         if tasks:
             with st.expander(f"📅 {['Pon','Wt','Śr','Czw','Pt','Sob','Nd'][i]} ({d_str})"):
                 for t in tasks: st.write(f"📦 **{t.get('klient') or t.get('miejsce')}** - {t.get('auto')} (K{t.get('kurs')})")
 
-# --- 7. TABELE REALIZACJI I TABLICA OGŁOSZEŃ ---
+# --- 7. TABELE REALIZACJI ---
 st.markdown('<div class="section-header">Listy Realizacji</div>', unsafe_allow_html=True)
 search = st.text_input("🔍 Szukaj we wszystkich wpisach...", "").lower()
 tabs = st.tabs(["🏭 Produkcja", "🔄 Odbiory", "🚚 Przyjęcia PZ", "📋 Dyspozycje", "📌 Tablica Ogłoszeń"])
@@ -367,7 +358,10 @@ def renderuj_tabele_ujednolicona(lista_zrodlowa, klucz_nazwa, klucz_szczegoly, k
                     new_s = st.text_area("Szczegóły", item.get(klucz_szczegoly), key=f"s_{u_id}")
                     new_au = st.selectbox("Auto", OPCJE_TRANSPORTU, OPCJE_TRANSPORTU.index(item.get('auto','Brak')), key=f"au_{u_id}")
                     new_kr = st.selectbox("Kurs", [1,2,3,4,5], int(item.get('kurs',1))-1, key=f"kr_{u_id}")
-                    if st.button("Zapisz", key=f"sv_{u_id}"): item.update({"termin":new_t, klucz_szczegoly:new_s, "auto":new_au, "kurs":int(new_kr)}); zapisz_dane(dane); st.rerun()
+                    if st.button("Zapisz", key=f"sv_{u_id}"): 
+                        item.update({"termin":new_t, klucz_szczegoly:new_s, "auto":new_au, "kurs":int(new_kr)})
+                        zapisz_dane(dane)
+                        st.rerun()
             if not is_readonly:
                 if status != "Gotowe" and c[3].button("ZROBIONE" if klucz_id != "pz" else "OK", key=f"ok_{u_id}"): item['status'] = "Gotowe"; zapisz_dane(dane); st.rerun()
                 elif status == "Gotowe" and c[3].button("WYŚLIJ", key=f"send_{u_id}"):
@@ -404,7 +398,6 @@ with tabs[3]:
     with s1: renderuj_tabele_ujednolicona(dane["dyspozycje"], "tytul", "opis", "dysp", "active")
     with s2: st.dataframe(dane["dyspozycje_historia"][::-1], use_container_width=True)
 
-# --- NOWA ZAKŁADKA: TABLICA OGŁOSZEŃ ---
 with tabs[4]:
     st.markdown('<div class="section-header">📌 Tablica Ogłoszeń</div>', unsafe_allow_html=True)
     if can_edit:
@@ -412,9 +405,7 @@ with tabs[4]:
             nowa_tresc = st.text_area("Dodaj ogłoszenie:")
             if st.form_submit_button("➕ Opublikuj"):
                 if nowa_tresc: dane["tablica"].append({"tresc": nowa_tresc, "data": datetime.now().strftime("%d.%m %H:%M"), "autor": st.session_state.user}); zapisz_dane(dane); st.rerun()
-    
-    if not dane["tablica"]:
-        st.info("Brak aktywnych ogłoszeń.")
+    if not dane["tablica"]: st.info("Brak ogłoszeń.")
     else:
         nc = st.columns(3)
         for i, note in enumerate(reversed(dane["tablica"])):
