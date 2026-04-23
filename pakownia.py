@@ -364,372 +364,6 @@ def pokaz_panel_szefa(zam_data, hist_data, dyspo_data, zwroty_data):
             for z in stare_zwroty: st.markdown(f"**{z.get('nr')}** - Stan: {z.get('stan')}")
 
 
-import streamlit as st
-import json
-import os
-import uuid
-import base64
-import pandas as pd
-import time
-from streamlit_gsheets import GSheetsConnection
-import streamlit.components.v1 as components
-from datetime import datetime, date
-
-# --- POŁĄCZENIE Z BAZĄ DANYCH (Pakownia WMS) ---
-@st.cache_resource
-def get_gsheet_client():
-    try:
-        conn = st.connection("gsheets_2", type=GSheetsConnection)
-        return conn.client
-    except Exception as e:
-        st.error(f"❌ Błąd autoryzacji z bazą Google Sheets: {e}")
-        return None
-
-client = get_gsheet_client()
-
-if not client:
-    st.warning("Oczekuję na poprawne połączenie z bazą...")
-    st.stop()
-
-# --- PROFESJONALNY CSS (Enterprise Design) ---
-st.markdown("""
-<style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    html, body, [data-testid="stAppViewContainer"] {
-        font-family: 'Inter', sans-serif;
-        background-color: #f8fafc;
-        color: #1e293b;
-    }
-
-    .stApp { background-color: #f8fafc; }
-    .block-container { padding-top: 2.5rem; max-width: 96%; padding-bottom: 2rem; }
-
-    #MainMenu {visibility: hidden;} 
-    header {visibility: hidden;} 
-    footer {visibility: hidden;} 
-    [data-testid="collapsedControl"] {display: none !important;} 
-
-    /* Nowoczesne Karty */
-    div[data-testid="stVerticalBlock"] div[style*="border"] {
-        border-radius: 12px !important;
-        background-color: #ffffff !important;
-        border: 1px solid #e2e8f0 !important;
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01) !important;
-        padding: 24px !important;
-        transition: all 0.3s ease;
-    }
-    
-    div[data-testid="stVerticalBlock"] div[style*="border"]:hover {
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(15, 23, 42, 0.03) !important;
-        transform: translateY(-2px);
-    }
-
-    /* Przyciski Granatowe */
-    button[kind="primary"] {
-        background-color: #1e293b !important; 
-        color: #ffffff !important;
-        border-radius: 6px !important;
-        border: 1px solid #1e293b !important;
-        font-weight: 600 !important;
-        font-size: 0.85rem !important;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 0.6rem 1.5rem !important;
-        width: 100% !important;
-        box-shadow: 0 4px 6px -1px rgba(30, 41, 59, 0.15) !important;
-        transition: all 0.2s ease;
-    }
-    button[kind="primary"]:hover { 
-        background-color: #334155 !important; 
-        box-shadow: 0 6px 12px -2px rgba(30, 41, 59, 0.25) !important;
-    }
-    button[kind="secondary"] {
-        background-color: #ffffff !important;
-        color: #475569 !important;
-        border: 1px solid #cbd5e1 !important;
-        border-radius: 6px !important;
-        font-weight: 600 !important;
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05) !important;
-        transition: all 0.2s ease;
-    }
-    button[kind="secondary"]:hover {
-        background-color: #f8fafc !important;
-        border-color: #94a3b8 !important;
-        color: #1e293b !important;
-    }
-
-    div[data-testid="stMetricValue"] { color: #0f172a !important; font-weight: 800 !important; font-size: 2.2rem !important; }
-    div[data-testid="stMetricLabel"] { color: #64748b !important; font-weight: 600 !important; text-transform: uppercase; font-size: 0.75rem !important; letter-spacing: 0.5px; }
-    h1, h2, h3, h4, h5 { color: #0f172a !important; font-weight: 800 !important; letter-spacing: -0.03em !important; }
-    button[data-baseweb="tab"] { font-weight: 600 !important; color: #64748b !important; font-size: 0.9rem !important; }
-    button[aria-selected="true"] { color: #1e293b !important; border-bottom: 2px solid #1e293b !important; }
-    hr { border-color: #e2e8f0 !important; margin: 1.5rem 0 !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- GOOGLE SHEETS LOGIKA ---
-conn = st.connection("gsheets_2", type=GSheetsConnection)
-
-ZAM_FILE = "Zamowienia"
-HIST_FILE = "Historia"
-DYSPOZYCJE_FILE = "Dyspozycje"
-ZWROTY_FILE = "Zwroty"
-ETYKIETY_FILE = "Etykiety"
-
-SHEET_HEADERS = {
-    "Zamowienia": ["id", "nr", "co", "termin", "ma_etykiete", "typ_wysylki", "postep"],
-    "Historia": ["id", "nr", "co", "termin", "ma_etykiete", "data_pakowania", "typ_wysylki", "postep"],
-    "Dyspozycje": ["id", "tresc", "data_dodania"],
-    "Zwroty": ["id", "nr", "stan", "powod", "notatki", "status", "data", "data_rozpatrzenia"],
-    "Etykiety": ["zam_id", "czesc", "dane"]
-}
-
-def load_data(sheet_name):
-    try:
-        df = conn.read(worksheet=sheet_name, ttl=0)
-        df = df.dropna(how='all') 
-        df = df.fillna("") 
-        return df.to_dict(orient="records")
-    except Exception:
-        return []
-
-def save_data(sheet_name, data):
-    if not data:
-        df = pd.DataFrame(columns=SHEET_HEADERS.get(sheet_name, []))
-    else:
-        df = pd.DataFrame(data)
-    try:
-        conn.update(worksheet=sheet_name, data=df)
-    except Exception as e:
-        st.error(f"Błąd zapisu do Arkusza Google ({sheet_name}): {e}")
-
-def usun_etykiete(order_id):
-    etyk_data = load_data(ETYKIETY_FILE)
-    nowe_etyk = [e for e in etyk_data if str(e.get('zam_id')) != str(order_id)]
-    if len(nowe_etyk) != len(etyk_data):
-        save_data(ETYKIETY_FILE, nowe_etyk)
-
-def move_to_history(order_id):
-    zam = load_data(ZAM_FILE)
-    hist = load_data(HIST_FILE)
-    etyk_data = load_data(ETYKIETY_FILE)
-    
-    order = next((x for x in zam if str(x.get('id')) == str(order_id)), None)
-    if order:
-        order['data_pakowania'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-        hist.insert(0, order)
-        zam = [x for x in zam if str(x.get('id')) != str(order_id)]
-        nowe_etyk = [e for e in etyk_data if str(e.get('zam_id')) != str(order_id)]
-        
-        save_data(ZAM_FILE, zam)
-        save_data(HIST_FILE, hist)
-        if len(nowe_etyk) != len(etyk_data):
-            save_data(ETYKIETY_FILE, nowe_etyk)
-            
-        time.sleep(0.5)
-
-def restore_from_history(order_id):
-    zam = load_data(ZAM_FILE)
-    hist = load_data(HIST_FILE)
-    order = next((x for x in hist if str(x.get('id')) == str(order_id)), None)
-    if order:
-        if 'data_pakowania' in order: del order['data_pakowania']
-        order['ma_etykiete'] = "False" 
-        zam.append(order)
-        zam.sort(key=lambda x: str(x.get('termin', '9999-12-31')))
-        hist = [x for x in hist if str(x.get('id')) != str(order_id)]
-        save_data(ZAM_FILE, zam)
-        save_data(HIST_FILE, hist)
-        time.sleep(0.5)
-
-def move_dyspozycja_to_history(dysp_id):
-    dyspo = load_data(DYSPOZYCJE_FILE)
-    dyspo = [x for x in dyspo if str(x.get('id')) != str(dysp_id)]
-    save_data(DYSPOZYCJE_FILE, dyspo)
-    time.sleep(0.5)
-
-# ==========================================
-# WIDOK 1: PANEL SZEFA
-# ==========================================
-def pokaz_panel_szefa(zam_data, hist_data, dyspo_data, zwroty_data):
-    c1, c2, c3, c4 = st.columns([5, 2, 1.5, 1.5])
-    c1.markdown("<h2 style='color: #1e3a8a; margin-top: -15px; font-weight: 800;'>PANEL SZEFA</h2>", unsafe_allow_html=True)
-    c2.markdown("<div style='text-align: right; margin-top: 5px;'><b>Użytkownik:</b> Administrator 👨‍💼</div>", unsafe_allow_html=True)
-    
-    if c3.button("🔄 Odśwież", use_container_width=True, key="btn_refresh_boss"):
-        st.rerun()
-        
-    if c4.button("Wyloguj się", use_container_width=True, key="btn_logout_boss"):
-        st.session_state['zalogowany'] = False
-        st.rerun()
-    st.divider()
-
-    dzisiaj_str = datetime.now().strftime("%Y-%m-%d")
-    st.markdown("<h3 style='color: #1e3a8a;'>📊 Przegląd Operacyjny</h3>", unsafe_allow_html=True)
-    
-    do_spakowania_dzisiaj = sum(1 for z in zam_data if str(z.get('termin', '9999-12-31')) <= dzisiaj_str)
-    spakowane_dzisiaj = sum(1 for h in hist_data if str(h.get('data_pakowania', '')).startswith(dzisiaj_str))
-    oczekujace_zwroty = sum(1 for z in zwroty_data if str(z.get('status')) == 'Nowy')
-    
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric(label="Wszystkie w kolejce", value=len(zam_data))
-    m2.metric(label="Wymagane na dzisiaj", value=do_spakowania_dzisiaj)
-    m3.metric(label="Spakowane dzisiaj", value=spakowane_dzisiaj)
-    if oczekujace_zwroty > 0:
-        m4.markdown(f"**Oczekujące zwroty**<br><span style='font-size:2rem; font-weight:800; color:#ef4444;'>{oczekujace_zwroty} ⚠️</span>", unsafe_allow_html=True)
-    else:
-        m4.metric(label="Oczekujące zwroty", value=oczekujace_zwroty)
-    st.divider()
-    
-    t1, t2, t3, t4, t5 = st.tabs(["➕ Nowe Zlecenie", "📦 Aktywne na Produkcji", "🗄️ Baza Historyczna", "📝 Zadania", "↩️ Zwroty i Reklamacje"])
-
-    with t1:
-        col_form, col_pusty = st.columns([2, 1])
-        with col_form:
-            with st.form("add_form", clear_on_submit=True):
-                st.markdown("#### Utwórz nowe zlecenie kompletacji")
-                nr = st.text_input("Indeks / Numer zamówienia")
-                termin = st.date_input("Wymagany termin realizacji", value=date.today())
-                typ_wysylki = st.radio("Rodzaj dostawy", ["Kurier (Internet)", "Bezpośrednio do klienta"], horizontal=True)
-                
-                st.caption("Wpisz każdy produkt w osobnej linii, aby stworzyć listę dla pracownika:")
-                co = st.text_area("Specyfikacja (co spakować)")
-                
-                plik_etykiety = st.file_uploader("Załącz list przewozowy / etykietę (PDF)", type=["pdf"])
-                if st.form_submit_button("PRZEKAŻ NA MAGAZYN", type="primary"):
-                    if nr and co:
-                        if len(zam_data) > 0 and str(zam_data[-1].get('nr')) == str(nr):
-                            st.toast("Zlecenie o tym numerze zostało przed chwilą dodane!", icon="⚠️")
-                        else:
-                            new_id = str(uuid.uuid4())
-                            if plik_etykiety is not None:
-                                pdf_b64 = base64.b64encode(plik_etykiety.read()).decode('utf-8')
-                                chunk_size = 45000 
-                                etyk_baza = load_data(ETYKIETY_FILE)
-                                for idx, i in enumerate(range(0, len(pdf_b64), chunk_size)):
-                                    chunk = pdf_b64[i:i+chunk_size]
-                                    etyk_baza.append({"zam_id": new_id, "czesc": idx, "dane": chunk})
-                                save_data(ETYKIETY_FILE, etyk_baza)
-                            
-                            zam_data.append({
-                                "id": new_id, 
-                                "nr": nr, 
-                                "co": co, 
-                                "termin": termin.strftime("%Y-%m-%d"), 
-                                "ma_etykiete": "True" if plik_etykiety else "False",
-                                "typ_wysylki": typ_wysylki,
-                                "postep": "[]"
-                            })
-                            zam_data.sort(key=lambda x: str(x.get('termin', '9999-12-31')))
-                            save_data(ZAM_FILE, zam_data)
-                            time.sleep(0.5)
-                            st.toast(f"Pomyślnie dodano: {nr}", icon="✅")
-                            st.rerun() 
-                    else: st.toast("Wypełnij wymagane pola formularza.", icon="❗️")
-
-    with t2:
-        st.markdown("#### Zlecenia w trakcie realizacji przez pakownię")
-        if not zam_data: st.info("Obecnie pracownicy nie mają żadnych aktywnych zleceń.")
-        else:
-            for z in zam_data:
-                with st.expander(f"ZAM: {z['nr']}  |  Wymagany termin: {z.get('termin', 'Brak')}"):
-                    col_info, col_action = st.columns([4, 1])
-                    
-                    linie = [l.strip() for l in str(z.get('co', '')).split('\n') if l.strip()]
-                    try:
-                        postep = json.loads(str(z.get('postep', '[]')))
-                        if not isinstance(postep, list): postep = []
-                    except: postep = []
-                    while len(postep) < len(linie): postep.append(False)
-                    
-                    co_html = ""
-                    for idx, linia in enumerate(linie):
-                        znak = "✅" if postep[idx] else "⏳"
-                        co_html += f"<div style='margin-bottom: 4px;'>{znak} {linia}</div>"
-                    
-                    info_text = f"**Dostawa:** {z.get('typ_wysylki', 'Brak danych')}<br><br>**Postęp kompletacji:**<br>{co_html}"
-                    if str(z.get('ma_etykiete')) == "True": info_text += "<br><span style='color:#1e3a8a;'>📄 Etykieta w chmurze gotowa</span>"
-                    
-                    col_info.markdown(info_text, unsafe_allow_html=True)
-                    if col_action.button("Wycofaj (Usuń)", key=f"boss_cancel_{z['id']}", use_container_width=True):
-                        nowe_zam = [x for x in zam_data if str(x.get('id')) != str(z['id'])]
-                        save_data(ZAM_FILE, nowe_zam)
-                        usun_etykiete(z['id']) 
-                        time.sleep(0.5)
-                        st.rerun()
-
-    with t3:
-        st.markdown("#### Dziennik operacji (Zamówienia)")
-        if not hist_data: st.info("Brak wpisów w dzienniku.")
-        else:
-            for h in hist_data:
-                with st.expander(f"✔️ ZAM: {h.get('nr')}  |  Wykonano: {h.get('data_pakowania', 'Brak')}"):
-                    col_info, col_action = st.columns([4, 1])
-                    co_html = str(h.get('co', '')).replace('\n', '<br>')
-                    col_info.markdown(f"**Dostawa:** {h.get('typ_wysylki', 'Brak danych')}<br>**Szczegóły:**<br>{co_html}", unsafe_allow_html=True)
-                    if col_action.button("Przywróć na produkcję", key=f"boss_{h['id']}", use_container_width=True):
-                        restore_from_history(h['id'])
-                        st.rerun()
-            st.markdown("<br>", unsafe_allow_html=True)
-            with st.expander("⚙️ Zaawansowana administracja rekordami"):
-                edited_hist = st.data_editor(hist_data, num_rows="dynamic", use_container_width=True)
-                if st.button("Zapisz zmiany w bazie zamówień"):
-                    save_data(HIST_FILE, edited_hist)
-                    time.sleep(0.5)
-                    st.toast("Zaktualizowano.", icon="💾")
-
-    with t4:
-        col_d1, col_d2 = st.columns([1, 1])
-        with col_d1:
-            with st.form("form_dyspozycja", clear_on_submit=True):
-                st.markdown("#### Dodaj nowe zadanie poboczne")
-                tresc_dysp = st.text_area("Treść zadania")
-                if st.form_submit_button("Wyślij Dyspozycję", type="primary"):
-                    if tresc_dysp:
-                        dyspo_data.insert(0, {"id": str(uuid.uuid4()), "tresc": tresc_dysp, "data_dodania": datetime.now().strftime("%Y-%m-%d %H:%M")})
-                        save_data(DYSPOZYCJE_FILE, dyspo_data)
-                        time.sleep(0.5)
-                        st.rerun()
-        with col_d2:
-            st.markdown("#### Aktywne zadania")
-            if not dyspo_data: st.info("Brak aktywnych zadań.")
-            else:
-                for d in dyspo_data:
-                    with st.container(border=True):
-                        st.markdown(f"**Wysłano:** {d.get('data_dodania')}<br>{d.get('tresc')}", unsafe_allow_html=True)
-                        if st.button("Usuń", key=f"del_dysp_{d['id']}"):
-                            save_data(DYSPOZYCJE_FILE, [x for x in dyspo_data if str(x.get('id')) != str(d['id'])])
-                            time.sleep(0.5)
-                            st.rerun()
-                            
-    with t5:
-        st.markdown("#### Obsługa Zwrotów i Reklamacji (RMA)")
-        nowe_zwroty = [z for z in zwroty_data if str(z.get('status')) == 'Nowy']
-        stare_zwroty = [z for z in zwroty_data if str(z.get('status')) == 'Rozpatrzony']
-        st.markdown("##### 🔴 Oczekujące na Twoją decyzję")
-        if not nowe_zwroty: st.success("Wszystkie zwroty zostały rozpatrzone.")
-        else:
-            for z in nowe_zwroty:
-                with st.container(border=True):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.markdown(f"<span style='color:#ef4444; font-weight:bold; font-size:18px;'>ZAMÓWIENIE NR: {z.get('nr')}</span>", unsafe_allow_html=True)
-                        st.write(f"**Zgłoszono:** {z.get('data')} | **Stan:** {z.get('stan')}")
-                    with col2:
-                        if st.button("Rozpatrzono", key=f"zwr_{z['id']}", use_container_width=True, type="primary"):
-                            for item in zwroty_data:
-                                if str(item['id']) == str(z['id']):
-                                    item['status'] = 'Rozpatrzony'
-                                    item['data_rozpatrzenia'] = datetime.now().strftime("%Y-%m-%d %H:%M")
-                            save_data(ZWROTY_FILE, zwroty_data)
-                            time.sleep(0.5)
-                            st.rerun()
-        st.divider()
-        with st.expander("📁 Archiwum rozwiązanych zwrotów"):
-            for z in stare_zwroty: st.markdown(f"**{z.get('nr')}** - Stan: {z.get('stan')}")
-
-
 # ==========================================
 # WIDOK 2: TERMINAL PRACOWNIKA
 # ==========================================
@@ -915,13 +549,16 @@ def pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data):
                         restore_from_history(h['id'])
                         st.rerun()
 
-
 # ==========================================
 # GŁÓWNA LOGIKA WYŚWIETLANIA (Przełącznik)
 # ==========================================
 
-# Odczytujemy, jako kto się zalogował na stronie głównej
-globalna_rola = st.session_state.get('rola', 'brak')
+# Odczytujemy role z sesji (teraz może to być lista, np. ["admin"] lub ["wms_only"])
+role_uzytkownika = st.session_state.get('rola', [])
+
+# Zabezpieczenie: jeśli rola to nadal zwykły string, zamieniamy na listę
+if isinstance(role_uzytkownika, str):
+    role_uzytkownika = [role_uzytkownika]
 
 # Wczytujemy dane
 zam_data = load_data(ZAM_FILE)
@@ -929,16 +566,14 @@ hist_data = load_data(HIST_FILE)
 dyspo_data = load_data(DYSPOZYCJE_FILE)
 zwroty_data = load_data(ZWROTY_FILE)
 
-# Decyzja, co pokazać
-if globalna_rola == "admin":
-    # Administrator dostaje radio-button do przełączania widoków
-    st.markdown("---")
-    wybrany_widok = st.radio(
-        "🛠️ Opcje Administratora:", 
-        ["👔 Panel Szefa", "📦 Widok Terminala (Pracownik)"], 
-        horizontal=True
+# Decyzja, co pokazać: Czy w liście ról jest "admin"?
+if "admin" in role_uzytkownika:
+    # Administrator dostaje pasek boczny do dyskretnego przełączania widoków
+    st.sidebar.markdown("### ⚙️ Tryb Administratora")
+    wybrany_widok = st.sidebar.radio(
+        "Wybierz widok WMS:", 
+        ["👔 Panel Szefa", "📦 Terminal Pracownika"]
     )
-    st.markdown("---")
     
     if wybrany_widok == "👔 Panel Szefa":
         pokaz_panel_szefa(zam_data, hist_data, dyspo_data, zwroty_data)
@@ -946,5 +581,5 @@ if globalna_rola == "admin":
         pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data)
         
 else:
-    # Zwykły pracownik widzi tylko i wyłącznie terminal, bez możliwości zmiany
+    # Zwykły pracownik (np. wms_only) widzi tylko i wyłącznie terminal
     pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data)
