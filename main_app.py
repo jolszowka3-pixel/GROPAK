@@ -7,18 +7,29 @@ st.set_page_config(page_title="Gropak System", page_icon="🏢", layout="wide")
 # --- 2. BAZA UŻYTKOWNIKÓW (HARDCODED) ---
 # Tutaj zarządzasz dostępem. Dodaj nowych pracowników według wzoru poniżej.
 UZYTKOWNICY = {
-    "szef": {
+    "admin": {
         "haslo": "admin123", 
         "rola": ["admin"] # Admin i tak widzi wszystko
     },
-    "marek": {
+    "michal.bryl": {
         "haslo": "gropak2026", 
         "rola": ["erp_only", "wms_only"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
     },
-    "magazynier": {
-        "haslo": "paka777", 
+    "michal.bodura": {
+        "haslo": "gropak2026", 
+        "rola": ["erp_only"] # Widzi tylko pakownię
+    },
+    "bartek.rudnik": {
+        "haslo": "gropak2026", 
+        "rola": ["admin"] # Admin i tak widzi wszystko
+    },
+    "rafal.skazynski": {
+        "haslo": "gropak2026", 
+        "rola": ["wms_only"] # Marek widzi ERP i WMS, ale nie widzi Panelu Admina
+    },
+    "wysylka": {
+        "haslo": "gropak2026", 
         "rola": ["wms_only"] # Widzi tylko pakownię
-    }
 }
 
 # Inicjalizacja sesji
