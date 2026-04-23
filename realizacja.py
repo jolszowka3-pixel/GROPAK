@@ -12,13 +12,24 @@ OPCJE_TRANSPORTU = ["Brak", "Auto 1", "Auto 2", "Transport zewnętrzny", "Odbió
 @st.cache_resource
 def get_gsheet_client():
     try:
-        # Zmieniono klucz na db_erp, aby pasował do Secrets
+        # Pobieramy dane z Secrets
         creds_dict = st.secrets["db_erp"]
+        
+        # --- TO JEST KLUCZOWA POPRAWKA ---
+        # Naprawiamy klucz prywatny, zamieniając tekstowe "\n" na prawdziwe znaki nowej linii
+        if "private_key" in creds_dict:
+            creds_dict = dict(creds_dict) # Kopiujemy do zwykłego słownika
+            creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+        # --------------------------------
+        
         credentials = service_account.Credentials.from_service_account_info(creds_dict)
-        scoped_credentials = credentials.with_scopes(["https://www.googleapis.com/auth/spreadsheets","https://www.googleapis.com/auth/drive"])
+        scoped_credentials = credentials.with_scopes([
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ])
         return gspread.authorize(scoped_credentials)
     except Exception as e:
-        st.error(f"🚨 Błąd połączenia z bazą danych: {e}")
+        st.error(f"🚨 Błąd połączenia (Klucz Prywatny): {e}")
         return None
 
 def posortuj_dane(dane_sort):
