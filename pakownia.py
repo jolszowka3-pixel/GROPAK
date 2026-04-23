@@ -553,23 +553,19 @@ def pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data):
 # GŁÓWNA LOGIKA WYŚWIETLANIA (Przełącznik)
 # ==========================================
 
-# Odczytujemy role z sesji (teraz może to być lista, np. ["admin"] lub ["wms_only"])
+# Odczytujemy role z sesji
 role_uzytkownika = st.session_state.get('rola', [])
-
-# Zabezpieczenie: jeśli rola to nadal zwykły string, zamieniamy na listę
 if isinstance(role_uzytkownika, str):
     role_uzytkownika = [role_uzytkownika]
 
-# Wczytujemy dane
 zam_data = load_data(ZAM_FILE)
 hist_data = load_data(HIST_FILE)
 dyspo_data = load_data(DYSPOZYCJE_FILE)
 zwroty_data = load_data(ZWROTY_FILE)
 
-# Decyzja, co pokazać: Czy w liście ról jest "admin"?
-if "admin" in role_uzytkownika:
-    # Administrator dostaje pasek boczny do dyskretnego przełączania widoków
-    st.sidebar.markdown("### ⚙️ Tryb Administratora")
+# ZMIANA: Przełącznik widzi "admin" ORAZ "wms_szef"
+if "admin" in role_uzytkownika or "wms_szef" in role_uzytkownika:
+    st.sidebar.markdown("### ⚙️ Tryb Zarządzania WMS")
     wybrany_widok = st.sidebar.radio(
         "Wybierz widok WMS:", 
         ["👔 Panel Szefa", "📦 Terminal Pracownika"]
@@ -581,5 +577,4 @@ if "admin" in role_uzytkownika:
         pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data)
         
 else:
-    # Zwykły pracownik (np. wms_only) widzi tylko i wyłącznie terminal
     pokaz_terminal_pracownika(zam_data, hist_data, dyspo_data, zwroty_data)
