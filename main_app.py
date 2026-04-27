@@ -82,22 +82,24 @@ strona_glowna = st.Page("strona_glowna.py", title="Strona Publiczna", icon="🏠
 strona_kalkulator = st.Page("kalkulator.py", title="Kalkulator Wysyłek", icon="🧮")
 strona_erp = st.Page("realizacja.py", title="Baza Realizacji (ERP)", icon="📊")
 strona_wms = st.Page("pakownia.py", title="System Pakowania (WMS)", icon="📦")
+strona_zadania = st.Page("zadania.py", title="Moje Zadania", icon="✅") # <--- NOWA STRONA
 
 # --- 6. DYNAMICZNE BUDOWANIE MENU (MULTIDOSTĘP) ---
 strony_widoczne = [strona_glowna, strona_kalkulator]
 
+# Zabezpieczenie formatu ról jako lista
 role_uzytkownika = st.session_state.get('rola', [])
 if isinstance(role_uzytkownika, str):
     role_uzytkownika = [role_uzytkownika]
 
 if "admin" in role_uzytkownika:
-    strony_widoczne.extend([strona_erp, strona_wms])
+    # Admin widzi wszystko, w tym swoją prywatną listę zadań
+    strony_widoczne.extend([strona_erp, strona_wms, strona_zadania])
 else:
     if "erp_only" in role_uzytkownika:
         if strona_erp not in strony_widoczne:
             strony_widoczne.append(strona_erp)
             
-    # ZMIANA: Zakładkę pakowni widzi "wms_only" ORAZ "wms_szef"
     if "wms_only" in role_uzytkownika or "wms_szef" in role_uzytkownika:
         if strona_wms not in strony_widoczne:
             strony_widoczne.append(strona_wms)
